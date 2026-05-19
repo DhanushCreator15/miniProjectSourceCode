@@ -33,19 +33,13 @@
 #define TEXT_FILE           "accounts.txt"
 
 // MFA settings
-#define MAX_LOGIN_ATTEMPTS  3
-#define OTP_ATTEMPTS        3
-#define USERNAME            "admin"
-#define PASSWORD            "secure123"   // In production: use hashed storage
+// Duplicate MFA constants removed
 
 // Fingerprint simulation settings
 #define FP_SCAN_STEPS       20   // progress bar steps for fingerprint scan
 #define FP_MATCH_SCORE      92   // simulated confidence score (percent)
 #define FP_THRESHOLD        75   // minimum score required
-#define MAX_LOGIN_ATTEMPTS  3
-#define OTP_ATTEMPTS        3
-#define USERNAME            "admin"
-#define PASSWORD            "secure123"   // In production: use hashed storage
+// (removed duplicate definitions)
 
 // Face recognition simulation
 #define FACE_SCAN_STEPS     20            // progress-bar width
@@ -65,15 +59,28 @@ struct clientData
 
 // MFA
 int          authenticate(void);
-int          fingerprintAuth(void);
+// Duplicate fingerprint prototype removed
 void         getPassword(char *buf, int maxLen);
 int          verifyCredentials(const char *uname, const char *pass);
 int          generateOTP(void);
 int          verifyOTP(int otp);
-int          fingerprintAuth(void);
+// (removed duplicate prototype)
+int          faceRecognition(void);
+// ── Prototypes ───────────────────────────────────────────────────────────────
+void         getPassword(char *buf, int maxLen);
+int          verifyCredentials(const char *uname, const char *pass);
+int          generateOTP(void);
+int          verifyOTP(int otp);
 int          faceRecognition(void);
 void         progressBar(int steps, int delayMs, const char *label);
 void         printFaceFrame(void);
+// Transaction functions
+void         depositFunds(FILE *fPtr);
+void         withdrawFunds(FILE *fPtr);
+void         transferFunds(FILE *fPtr);
+void         viewBalance(FILE *fPtr);
+int          readUInt(unsigned int *out);
+int          readDouble(double *out);
 
 // Core operations
 unsigned int enterChoice(void);
@@ -94,7 +101,7 @@ int main(void)
     printf("=========================================\n");
     printf("   Transaction Processing System v3.0\n");
     printf("=========================================\n");
-    printf("   Three-Factor Authentication (3FA)\n");
+    printf("   Four-Factor Authentication (4FA)\n");
     printf("=========================================\n\n");
 
     if (!authenticate())
@@ -140,7 +147,12 @@ int main(void)
         case 3:  updateRecord(cfPtr);break;
         case 4:  newRecord(cfPtr);   break;
         case 5:  deleteRecord(cfPtr);break;
-        default: puts("Invalid choice. Please enter 1 – 6."); break;
+        case 7:  depositFunds(cfPtr);break;
+        case 8:  withdrawFunds(cfPtr);break;
+        case 9:  transferFunds(cfPtr);break;
+        case 10: viewBalance(cfPtr);break;
+        case 6:  // Exit handled by loop condition
+        default: puts("Invalid choice. Please enter 1 – 10."); break;
         }
     }
 
@@ -206,11 +218,17 @@ int authenticate(void)
     printf("[Factor 2]  PASSED\n\n");
 
     // ── Factor 3: Face Recognition ───────────────────────────────────────────
-    printf("[Factor 3 / 3]  Face Recognition\n");
+    printf("[Factor 3 / 4]  Face Recognition\n");
     printf("------------------------------------------\n");
 
     if (!faceRecognition()) return 0;
-    printf("[Factor 3]  PASSED\n");
+    printf("[Factor 3]  PASSED\n\n");
+
+    // ── Factor 4: Fingerprint Authentication ───────────────────────────────────────
+    printf("[Factor 4 / 4]  Fingerprint Authentication\n");
+    printf("------------------------------------------\n");
+    if (!fingerprintAuth()) return 0;
+    printf("[Factor 4]  PASSED\n");
 
     return 1;
 }
@@ -572,6 +590,93 @@ void newRecord(FILE *fPtr)
     printf("Account #%u created successfully.\n", accountNum);
 }
 
+// ── depositFunds ───────────────────────────────────────────────────────────────
+void depositFunds(FILE *fPtr)
+{
+    unsigned int acct;
+    double amount;
+    printf("Enter account number to deposit into (1 - %d): ", MAX_ACCOUNTS);
+    if (!readUInt(&acct) || acct < 1 || acct > MAX_ACCOUNTS) { puts("Invalid account."); return; }
+    printf("Enter deposit amount: ");
+    if (!readDouble(&amount) || amount <= 0) { puts("Invalid amount."); return; }
+    struct clientData client;
+    fseek(fPtr, (long)(acct - 1) * sizeof(struct clientData), SEEK_SET);
+    fread(&client, sizeof(struct clientData), 1, fPtr);
+    if (client.acctNum == 0) { printf("Account #%u does not exist.\n", acct); return; }
+    client.balance += amount;
+    fseek(fPtr, (long)(acct - 1) * sizeof(struct clientData), SEEK_SET);
+    fwrite(&client, sizeof(struct clientData), 1, fPtr);
+    printf("Deposited $%.2f into account #%u. New balance: $%.2f\n", amount, acct, client.balance);
+}
+
+// ── withdrawFunds ──────────────────────────────────────────────────────────────
+void withdrawFunds(FILE *fPtr)
+{
+    unsigned int acct;
+    double amount;
+    printf("Enter account number to withdraw from (1 - %d): ", MAX_ACCOUNTS);
+    if (!readUInt(&acct) || acct < 1 || acct > MAX_ACCOUNTS) { puts("Invalid account."); return; }
+    printf("Enter withdrawal amount: ");
+    if (!readDouble(&amount) || amount <= 0) { puts("Invalid amount."); return; }
+    struct clientData client;
+    fseek(fPtr, (long)(acct - 1) * sizeof(struct clientData), SEEK_SET);
+    fread(&client, sizeof(struct clientData), 1, fPtr);
+    if (client.acctNum == 0) { printf("Account #%u does not exist.\n", acct); return; }
+    if (client.balance < amount) { puts("Insufficient funds."); return; }
+    client.balance -= amount;
+    fseek(fPtr, (long)(acct - 1) * sizeof(struct clientData), SEEK_SET);
+    fwrite(&client, sizeof(struct clientData), 1, fPtr);
+    printf("Withdrew $%.2f from account #%u. New balance: $%.2f\n", amount, acct, client.balance);
+}
+
+// ── transferFunds ───────────────────────────────────────────────────────────────
+void transferFunds(FILE *fPtr)
+{
+    unsigned int src, dst;
+    double amount;
+    printf("Enter SOURCE account number (1 - %d): ", MAX_ACCOUNTS);
+    if (!readUInt(&src) || src < 1 || src > MAX_ACCOUNTS) { puts("Invalid source account."); return; }
+    printf("Enter DESTINATION account number (1 - %d): ", MAX_ACCOUNTS);
+    if (!readUInt(&dst) || dst < 1 || dst > MAX_ACCOUNTS) { puts("Invalid destination account."); return; }
+    if (src == dst) { puts("Source and destination must differ."); return; }
+    printf("Enter transfer amount: ");
+    if (!readDouble(&amount) || amount <= 0) { puts("Invalid amount."); return; }
+    struct clientData srcClient, dstClient;
+    // Load source
+    fseek(fPtr, (long)(src - 1) * sizeof(struct clientData), SEEK_SET);
+    fread(&srcClient, sizeof(struct clientData), 1, fPtr);
+    if (srcClient.acctNum == 0) { printf("Source account #%u does not exist.\n", src); return; }
+    // Load destination
+    fseek(fPtr, (long)(dst - 1) * sizeof(struct clientData), SEEK_SET);
+    fread(&dstClient, sizeof(struct clientData), 1, fPtr);
+    if (dstClient.acctNum == 0) { printf("Destination account #%u does not exist.\n", dst); return; }
+    if (srcClient.balance < amount) { puts("Insufficient funds in source account."); return; }
+    // Perform transfer
+    srcClient.balance -= amount;
+    dstClient.balance += amount;
+    // Write back source
+    fseek(fPtr, (long)(src - 1) * sizeof(struct clientData), SEEK_SET);
+    fwrite(&srcClient, sizeof(struct clientData), 1, fPtr);
+    // Write back destination
+    fseek(fPtr, (long)(dst - 1) * sizeof(struct clientData), SEEK_SET);
+    fwrite(&dstClient, sizeof(struct clientData), 1, fPtr);
+    printf("Transferred $%.2f from account #%u to account #%u.\n", amount, src, dst);
+    printf("New balances: Source $%.2f, Destination $%.2f\n", srcClient.balance, dstClient.balance);
+}
+
+// ── viewBalance ───────────────────────────────────────────────────────────────
+void viewBalance(FILE *fPtr)
+{
+    unsigned int acct;
+    printf("Enter account number to view balance (1 - %d): ", MAX_ACCOUNTS);
+    if (!readUInt(&acct) || acct < 1 || acct > MAX_ACCOUNTS) { puts("Invalid account."); return; }
+    struct clientData client;
+    fseek(fPtr, (long)(acct - 1) * sizeof(struct clientData), SEEK_SET);
+    fread(&client, sizeof(struct clientData), 1, fPtr);
+    if (client.acctNum == 0) { printf("Account #%u does not exist.\n", acct); return; }
+    printf("Account #%u balance: $%.2f\n", acct, client.balance);
+}
+
 // ── enterChoice ──────────────────────────────────────────────────────────────
 unsigned int enterChoice(void)
 {
@@ -585,6 +690,11 @@ unsigned int enterChoice(void)
     printf("  4 - Add a new account\n");
     printf("  5 - Delete an account\n");
     printf("  6 - Exit\n");
+    printf("  7 - Deposit funds\n");
+    printf("  8 - Withdraw funds\n");
+    printf("  9 - Transfer funds\n");
+    printf(" 10 - View account balance\n");
+
     printf("=========================================\n");
     printf("Your choice: ");
     if (!readUInt(&menuChoice)) menuChoice = 0;
