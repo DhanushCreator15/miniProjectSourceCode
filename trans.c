@@ -3,7 +3,8 @@
 // updates data already written to the file, creates new data to
 // be placed in the file, and deletes data previously in the file.
 //
-// Improvements over original:
+// Version 2.0 Improvements:
+//   - Multi-Factor Authentication (Username/Password + OTP)
 //   - Auto-initializes credit.dat if it does not exist
 //   - Fixed feof() anti-pattern in textFile()
 //   - Fixed scanf format specifiers (%u for unsigned int)
@@ -15,11 +16,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <conio.h>   // _getch() for masked password (Windows)
 
 // ── Constants ────────────────────────────────────────────────────────────────
-#define MAX_ACCOUNTS   100
-#define DATA_FILE      "credit.dat"
-#define TEXT_FILE      "accounts.txt"
+#define MAX_ACCOUNTS        100
+#define DATA_FILE           "credit.dat"
+#define TEXT_FILE           "accounts.txt"
+
+// MFA settings
+#define MAX_LOGIN_ATTEMPTS  3
+#define OTP_DIGITS          6
+#define OTP_ATTEMPTS        3
+#define USERNAME            "admin"
+#define PASSWORD            "secure123"  // In production: use hashed storage
 
 // ── Structure ────────────────────────────────────────────────────────────────
 struct clientData
@@ -31,6 +41,15 @@ struct clientData
 };
 
 // ── Prototypes ───────────────────────────────────────────────────────────────
+
+// MFA
+int          authenticate(void);
+void         getPassword(char *buf, int maxLen);
+int          verifyCredentials(const char *uname, const char *pass);
+int          generateOTP(void);
+int          verifyOTP(int otp);
+
+// Core operations
 unsigned int enterChoice(void);
 void         initFile(FILE *fPtr);
 void         textFile(FILE *readPtr);
@@ -38,60 +57,72 @@ void         listAccounts(FILE *fPtr);
 void         updateRecord(FILE *fPtr);
 void         newRecord(FILE *fPtr);
 void         deleteRecord(FILE *fPtr);
-int          readUInt(unsigned int *out);   // safe unsigned-int input
-int          readDouble(double *out);       // safe double input
+int          readUInt(unsigned int *out);
+int          readDouble(double *out);
 
 // ── main ─────────────────────────────────────────────────────────────────────
 int main(void)
 {
-    FILE        *cfPtr;
-    unsigned int choice;
+    // ── Step 1: MFA Login ────────────────────────────────────────────────────
+    printf("=========================================\n");
+    printf("   Transaction Processing System v2.0\n");
+    printf("=========================================\n");
+    printf("         Multi-Factor Authentication\n");
+    printf("=========================================\n\n");
 
-    // Open for read+write (binary). Create if not present.
-    cfPtr = fopen(DATA_FILE, "rb+");
+    if (!authenticate())
+    {
+        fprintf(stderr, "\nAccess denied. Exiting.\n");
+        return EXIT_FAILURE;
+    }
+
+    printf("\n[MFA] Authentication successful! Welcome, %s.\n\n", USERNAME);
+
+    // ── Step 2: Open / create data file ─────────────────────────────────────
+    FILE *cfPtr = fopen(DATA_FILE, "rb+");
     if (cfPtr == NULL)
     {
-        // File doesn't exist – create it and fill with blank records
         cfPtr = fopen(DATA_FILE, "wb+");
         if (cfPtr == NULL)
         {
-            fprintf(stderr, "Error: Cannot create %s.\n", DATA_FILE);
+            fprintf(stderr, "Error: Cannot create '%s'.\n", DATA_FILE);
             return EXIT_FAILURE;
         }
         printf("'%s' not found. Initializing with %d empty records...\n",
                DATA_FILE, MAX_ACCOUNTS);
         initFile(cfPtr);
-        printf("Initialization complete.\n");
+        printf("Initialization complete.\n\n");
     }
 
-    // Verify file has at least MAX_ACCOUNTS records
+    // Verify file size
     fseek(cfPtr, 0L, SEEK_END);
     long fileSize = ftell(cfPtr);
     if (fileSize < (long)(MAX_ACCOUNTS * sizeof(struct clientData)))
     {
-        printf("File is smaller than expected. Re-initializing...\n");
+        printf("File too small. Re-initializing...\n");
         rewind(cfPtr);
         initFile(cfPtr);
     }
 
-    // Main menu loop
+    // ── Step 3: Main menu loop ───────────────────────────────────────────────
+    unsigned int choice;
     while ((choice = enterChoice()) != 6)
     {
         switch (choice)
         {
-        case 1:   // print text file of accounts
+        case 1:
             textFile(cfPtr);
             break;
-        case 2:   // list all accounts to console
+        case 2:
             listAccounts(cfPtr);
             break;
-        case 3:   // update an existing record
+        case 3:
             updateRecord(cfPtr);
             break;
-        case 4:   // add a new record
+        case 4:
             newRecord(cfPtr);
             break;
-        case 5:   // delete an existing record
+        case 5:
             deleteRecord(cfPtr);
             break;
         default:
@@ -101,12 +132,162 @@ int main(void)
     }
 
     fclose(cfPtr);
-    puts("Goodbye!");
+    puts("\nSession closed. Goodbye!");
     return EXIT_SUCCESS;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//                       MFA FUNCTIONS
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── authenticate ─────────────────────────────────────────────────────────────
+// Runs both factors. Returns 1 on full success, 0 on failure.
+int authenticate(void)
+{
+    char uname[32];
+    char pass[32];
+    int  attempts = 0;
+
+    // ── Factor 1: Username + Password ────────────────────────────────────────
+    printf("[Factor 1] Username & Password\n");
+    printf("----------------------------------------\n");
+
+    while (attempts < MAX_LOGIN_ATTEMPTS)
+    {
+        printf("Username: ");
+        if (scanf("%31s", uname) != 1)
+        {
+            int ch; while ((ch = getchar()) != '\n' && ch != EOF);
+            attempts++;
+            continue;
+        }
+        int ch; while ((ch = getchar()) != '\n' && ch != EOF); // flush
+
+        printf("Password: ");
+        getPassword(pass, sizeof(pass));
+        printf("\n");
+
+        if (verifyCredentials(uname, pass))
+            break;
+
+        attempts++;
+        int remaining = MAX_LOGIN_ATTEMPTS - attempts;
+        if (remaining > 0)
+            printf("[!] Invalid credentials. %d attempt(s) remaining.\n\n",
+                   remaining);
+        else
+        {
+            printf("[!] Too many failed attempts. Account locked.\n");
+            return 0;
+        }
+    }
+
+    // ── Factor 2: OTP Verification ───────────────────────────────────────────
+    printf("\n[Factor 2] One-Time Password (OTP)\n");
+    printf("----------------------------------------\n");
+
+    srand((unsigned int)time(NULL));
+    int otp = generateOTP();
+
+    // Simulate sending OTP (in production: email/SMS via external service)
+    printf("[OTP] Your 6-digit OTP has been sent to your registered device.\n");
+    printf("[OTP SIMULATOR] OTP: %06d  <-- (simulated; normally sent to device)\n\n",
+           otp);
+
+    if (!verifyOTP(otp))
+        return 0;
+
+    return 1;
+}
+
+// ── getPassword ──────────────────────────────────────────────────────────────
+// Reads a password character by character, masking with '*'.
+void getPassword(char *buf, int maxLen)
+{
+    int  i = 0;
+    char ch;
+
+    while (i < maxLen - 1)
+    {
+        ch = (char)_getch();
+
+        if (ch == '\r' || ch == '\n') // Enter
+            break;
+
+        if (ch == '\b' || ch == 127)  // Backspace
+        {
+            if (i > 0)
+            {
+                i--;
+                printf("\b \b"); // erase '*'
+            }
+            continue;
+        }
+
+        buf[i++] = ch;
+        printf("*"); // mask the character
+    }
+    buf[i] = '\0';
+}
+
+// ── verifyCredentials ────────────────────────────────────────────────────────
+// Checks username and password against stored credentials.
+// Returns 1 if valid, 0 otherwise.
+int verifyCredentials(const char *uname, const char *pass)
+{
+    return (strcmp(uname, USERNAME) == 0 && strcmp(pass, PASSWORD) == 0);
+}
+
+// ── generateOTP ──────────────────────────────────────────────────────────────
+// Generates a random 6-digit OTP (100000 – 999999).
+int generateOTP(void)
+{
+    return (rand() % 900000) + 100000;
+}
+
+// ── verifyOTP ────────────────────────────────────────────────────────────────
+// Prompts the user to enter the OTP. Allows OTP_ATTEMPTS tries.
+// Returns 1 on success, 0 on failure.
+int verifyOTP(int otp)
+{
+    int entered;
+    int attempts = 0;
+
+    while (attempts < OTP_ATTEMPTS)
+    {
+        printf("Enter OTP: ");
+        int result = scanf("%d", &entered);
+        int ch; while ((ch = getchar()) != '\n' && ch != EOF); // flush
+
+        if (result != 1)
+        {
+            printf("[!] Invalid input. Please enter the 6-digit OTP.\n");
+            attempts++;
+            continue;
+        }
+
+        if (entered == otp)
+        {
+            printf("[OTP] Verified successfully.\n");
+            return 1;
+        }
+
+        attempts++;
+        int remaining = OTP_ATTEMPTS - attempts;
+        if (remaining > 0)
+            printf("[!] Incorrect OTP. %d attempt(s) remaining.\n\n", remaining);
+        else
+            printf("[!] OTP verification failed. Access denied.\n");
+    }
+
+    return 0;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//                      CORE BANK FUNCTIONS
+// ════════════════════════════════════════════════════════════════════════════
+
 // ── initFile ─────────────────────────────────────────────────────────────────
-// Writes MAX_ACCOUNTS blank (zero) clientData records into the file.
 void initFile(FILE *fPtr)
 {
     struct clientData blank = {0, "", "", 0.0};
@@ -116,7 +297,6 @@ void initFile(FILE *fPtr)
 }
 
 // ── textFile ─────────────────────────────────────────────────────────────────
-// Saves all active accounts to accounts.txt for printing.
 void textFile(FILE *readPtr)
 {
     FILE              *writePtr;
@@ -136,7 +316,6 @@ void textFile(FILE *readPtr)
             "------", "---------------", "----------", "----------");
 
     rewind(readPtr);
-    // Use fread return value – avoids the feof() anti-pattern
     while (fread(&client, sizeof(struct clientData), 1, readPtr) == 1)
     {
         if (client.acctNum != 0)
@@ -154,7 +333,6 @@ void textFile(FILE *readPtr)
 }
 
 // ── listAccounts ─────────────────────────────────────────────────────────────
-// Displays all active accounts directly on the console.
 void listAccounts(FILE *fPtr)
 {
     struct clientData client;
@@ -184,7 +362,6 @@ void listAccounts(FILE *fPtr)
 }
 
 // ── updateRecord ─────────────────────────────────────────────────────────────
-// Updates the balance of an existing record.
 void updateRecord(FILE *fPtr)
 {
     struct clientData client = {0, "", "", 0.0};
@@ -221,13 +398,11 @@ void updateRecord(FILE *fPtr)
     printf("Updated: %-6u  %-15s  %-10s  %10.2f\n",
            client.acctNum, client.lastName, client.firstName, client.balance);
 
-    // Seek back and overwrite
     fseek(fPtr, (long)(account - 1) * sizeof(struct clientData), SEEK_SET);
     fwrite(&client, sizeof(struct clientData), 1, fPtr);
 }
 
 // ── deleteRecord ─────────────────────────────────────────────────────────────
-// Deletes a record by zeroing it out.
 void deleteRecord(FILE *fPtr)
 {
     struct clientData client;
@@ -250,15 +425,12 @@ void deleteRecord(FILE *fPtr)
         return;
     }
 
-    printf("Deleting account: %-6u  %-15s  %-10s  %10.2f\n",
+    printf("Deleting: %-6u  %-15s  %-10s  %10.2f\n",
            client.acctNum, client.lastName, client.firstName, client.balance);
-
-    // Confirm deletion
     printf("Are you sure? (y/n): ");
-    char confirm = getchar();
-    // Flush remaining input
-    int ch;
-    while ((ch = getchar()) != '\n' && ch != EOF);
+
+    char confirm = (char)_getch();
+    printf("%c\n", confirm);
 
     if (confirm != 'y' && confirm != 'Y')
     {
@@ -272,7 +444,6 @@ void deleteRecord(FILE *fPtr)
 }
 
 // ── newRecord ────────────────────────────────────────────────────────────────
-// Creates and inserts a new record.
 void newRecord(FILE *fPtr)
 {
     struct clientData client = {0, "", "", 0.0};
@@ -294,26 +465,15 @@ void newRecord(FILE *fPtr)
         return;
     }
 
-    printf("Enter last name (max 14 chars): ");
-    if (scanf("%14s", client.lastName) != 1)
-    {
-        puts("Error reading last name.");
-        return;
-    }
+    printf("Enter last name  (max 14 chars): ");
+    if (scanf("%14s", client.lastName) != 1) { puts("Error."); return; }
 
-    printf("Enter first name (max 9 chars): ");
-    if (scanf("%9s", client.firstName) != 1)
-    {
-        puts("Error reading first name.");
-        return;
-    }
+    printf("Enter first name (max  9 chars): ");
+    if (scanf("%9s", client.firstName) != 1) { puts("Error."); return; }
+    int ch; while ((ch = getchar()) != '\n' && ch != EOF);
 
     printf("Enter opening balance: ");
-    if (!readDouble(&client.balance))
-    {
-        puts("Invalid balance entered.");
-        return;
-    }
+    if (!readDouble(&client.balance)) { puts("Invalid balance."); return; }
 
     client.acctNum = accountNum;
     fseek(fPtr, (long)(accountNum - 1) * sizeof(struct clientData), SEEK_SET);
@@ -326,43 +486,38 @@ unsigned int enterChoice(void)
 {
     unsigned int menuChoice = 0;
 
-    printf("\n========================================\n");
-    printf("  Transaction Processing System\n");
-    printf("========================================\n");
+    printf("\n=========================================\n");
+    printf("   Transaction Processing System v2.0\n");
+    printf("=========================================\n");
     printf("  1 - Save accounts to '%s'\n", TEXT_FILE);
     printf("  2 - List all accounts (console)\n");
     printf("  3 - Update an account\n");
     printf("  4 - Add a new account\n");
     printf("  5 - Delete an account\n");
     printf("  6 - Exit\n");
-    printf("========================================\n");
+    printf("=========================================\n");
     printf("Your choice: ");
 
     if (!readUInt(&menuChoice))
-        menuChoice = 0; // will hit default in switch
+        menuChoice = 0;
 
     return menuChoice;
 }
 
 // ── readUInt ─────────────────────────────────────────────────────────────────
-// Safely reads an unsigned int. Returns 1 on success, 0 on failure.
-// Clears the input buffer on failure to prevent infinite loops.
 int readUInt(unsigned int *out)
 {
     int result = scanf("%u", out);
     int ch;
-    // Flush rest of line
     while ((ch = getchar()) != '\n' && ch != EOF);
     return (result == 1);
 }
 
 // ── readDouble ───────────────────────────────────────────────────────────────
-// Safely reads a double. Returns 1 on success, 0 on failure.
 int readDouble(double *out)
 {
     int result = scanf("%lf", out);
     int ch;
-    // Flush rest of line
     while ((ch = getchar()) != '\n' && ch != EOF);
     return (result == 1);
 }
