@@ -38,6 +38,15 @@
 #define USERNAME            "admin"
 #define PASSWORD            "secure123"   // In production: use hashed storage
 
+// Fingerprint simulation settings
+#define FP_SCAN_STEPS       20   // progress bar steps for fingerprint scan
+#define FP_MATCH_SCORE      92   // simulated confidence score (percent)
+#define FP_THRESHOLD        75   // minimum score required
+#define MAX_LOGIN_ATTEMPTS  3
+#define OTP_ATTEMPTS        3
+#define USERNAME            "admin"
+#define PASSWORD            "secure123"   // In production: use hashed storage
+
 // Face recognition simulation
 #define FACE_SCAN_STEPS     20            // progress-bar width
 #define FACE_MATCH_SCORE    87            // simulated confidence score (%)
@@ -56,10 +65,12 @@ struct clientData
 
 // MFA
 int          authenticate(void);
+int          fingerprintAuth(void);
 void         getPassword(char *buf, int maxLen);
 int          verifyCredentials(const char *uname, const char *pass);
 int          generateOTP(void);
 int          verifyOTP(int otp);
+int          fingerprintAuth(void);
 int          faceRecognition(void);
 void         progressBar(int steps, int delayMs, const char *label);
 void         printFaceFrame(void);
@@ -272,6 +283,59 @@ int verifyOTP(int otp)
 // Returns 1 if face matches, 0 otherwise.
 int faceRecognition(void)
 {
+    // Existing face recognition simulation (unchanged)
+    printf("Initializing camera module...\n");
+    Sleep(800);
+    printFaceFrame();
+    Sleep(500);
+    printf("Detecting facial landmarks");
+    for (int i = 0; i < 5; i++) { printf("."); fflush(stdout); Sleep(300); }
+    printf("  done\n");
+    printf("Extracting facial features ");
+    for (int i = 0; i < 5; i++) { printf("."); fflush(stdout); Sleep(300); }
+    printf("  done\n");
+    printf("Matching against stored profile:\n");
+    progressBar(FACE_SCAN_STEPS, 80, "Scanning");
+    int score = FACE_MATCH_SCORE;
+    printf("\nConfidence Score : %d%%\n", score);
+    printf("Threshold        : %d%%\n", FACE_THRESHOLD);
+    if (score >= FACE_THRESHOLD) {
+        printf("[FACE] Identity VERIFIED. Access granted.\n");
+        return 1;
+    } else {
+        printf("[FACE] Face NOT recognized. Access denied.\n");
+        return 0;
+    }
+}
+
+// ── fingerprintAuth ───────────────────────────────────────────────────────────────
+// Simulated fingerprint authentication with terminal animation.
+int fingerprintAuth(void)
+{
+    printf("Initializing fingerprint sensor...\n");
+    Sleep(600);
+    // Simple ASCII representation of fingerprint scanner
+    printf("+-------------------+\n");
+    printf("|   _____________   |\n");
+    printf("|  /             \  |\n");
+    printf("| |   ~~~~~~~~   | |\n");
+    printf("| |   ~~~~~~~~   | |\n");
+    printf("|  \_____________/  |\n");
+    printf("+-------------------+\n");
+    Sleep(500);
+    // Simulate scanning progress
+    progressBar(FP_SCAN_STEPS, 70, "Scanning Fingerprint");
+    // Simulated confidence score
+    int score = FP_MATCH_SCORE;
+    printf("\nFingerprint confidence: %d%% (threshold: %d%%)\n", score, FP_THRESHOLD);
+    if (score >= FP_THRESHOLD) {
+        printf("[FINGERPRINT] Match successful.\n");
+        return 1;
+    } else {
+        printf("[FINGERPRINT] Match failed.\n");
+        return 0;
+    }
+}
     printf("Initializing camera module...\n");
     Sleep(800);
 
