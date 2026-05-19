@@ -59,19 +59,12 @@ struct clientData
 
 // MFA
 int          authenticate(void);
-// Duplicate fingerprint prototype removed
-void         getPassword(char *buf, int maxLen);
-int          verifyCredentials(const char *uname, const char *pass);
-int          generateOTP(void);
-int          verifyOTP(int otp);
-// (removed duplicate prototype)
-int          faceRecognition(void);
-// ── Prototypes ───────────────────────────────────────────────────────────────
 void         getPassword(char *buf, int maxLen);
 int          verifyCredentials(const char *uname, const char *pass);
 int          generateOTP(void);
 int          verifyOTP(int otp);
 int          faceRecognition(void);
+int          fingerprintAuth(void);
 void         progressBar(int steps, int delayMs, const char *label);
 void         printFaceFrame(void);
 // Transaction functions
@@ -358,43 +351,6 @@ int fingerprintAuth(void)
         return 0;
     }
 }
-    printf("Initializing camera module...\n");
-    Sleep(800);
-
-    // Draw a simple ASCII face-scan frame
-    printFaceFrame();
-    Sleep(500);
-
-    // Landmark detection phase
-    printf("Detecting facial landmarks");
-    for (int i = 0; i < 5; i++) { printf("."); fflush(stdout); Sleep(300); }
-    printf("  done\n");
-
-    // Feature extraction phase
-    printf("Extracting facial features ");
-    for (int i = 0; i < 5; i++) { printf("."); fflush(stdout); Sleep(300); }
-    printf("  done\n");
-
-    // Matching progress bar
-    printf("Matching against stored profile:\n");
-    progressBar(FACE_SCAN_STEPS, 80, "Scanning");
-
-    // Simulate confidence score
-    int score = FACE_MATCH_SCORE;
-    printf("\nConfidence Score : %d%%\n", score);
-    printf("Threshold        : %d%%\n", FACE_THRESHOLD);
-
-    if (score >= FACE_THRESHOLD)
-    {
-        printf("[FACE] Identity VERIFIED. Access granted.\n");
-        return 1;
-    }
-    else
-    {
-        printf("[FACE] Face NOT recognized. Access denied.\n");
-        return 0;
-    }
-}
 
 // ── progressBar ──────────────────────────────────────────────────────────────
 // Prints an animated progress bar of `steps` blocks with `delayMs` per block.
@@ -610,6 +566,7 @@ void depositFunds(FILE *fPtr)
     client.balance += amount;
     fseek(fPtr, (long)(acct - 1) * sizeof(struct clientData), SEEK_SET);
     fwrite(&client, sizeof(struct clientData), 1, fPtr);
+    logTransaction("Deposit", acct, 0, amount);
     printf("Deposited $%.2f into account #%u. New balance: $%.2f\n", amount, acct, client.balance);
 }
 
@@ -630,6 +587,7 @@ void withdrawFunds(FILE *fPtr)
     client.balance -= amount;
     fseek(fPtr, (long)(acct - 1) * sizeof(struct clientData), SEEK_SET);
     fwrite(&client, sizeof(struct clientData), 1, fPtr);
+    logTransaction("Withdrawal", acct, 0, amount);
     printf("Withdrew $%.2f from account #%u. New balance: $%.2f\n", amount, acct, client.balance);
 }
 
@@ -664,12 +622,68 @@ void transferFunds(FILE *fPtr)
     // Write back destination
     fseek(fPtr, (long)(dst - 1) * sizeof(struct clientData), SEEK_SET);
     fwrite(&dstClient, sizeof(struct clientData), 1, fPtr);
+    logTransaction("Transfer", src, dst, amount);
     printf("Transferred $%.2f from account #%u to account #%u.\n", amount, src, dst);
     printf("New balances: Source $%.2f, Destination $%.2f\n", srcClient.balance, dstClient.balance);
 }
 
-// ── viewLog function placed after transaction functions (see above)
-// (Already defined earlier)
+// ── viewBalance ──────────────────────────────────────────────────────────────
+void viewBalance(FILE *fPtr)
+{
+    unsigned int accountNum;
+    struct clientData client;
+
+    printf("Enter account number to view balance (1 - %d): ", MAX_ACCOUNTS);
+    if (!readUInt(&accountNum) || accountNum < 1 || accountNum > MAX_ACCOUNTS)
+    { puts("Invalid account number."); return; }
+
+    fseek(fPtr, (long)(accountNum - 1) * sizeof(struct clientData), SEEK_SET);
+    fread(&client, sizeof(struct clientData), 1, fPtr);
+
+    if (client.acctNum == 0)
+    { printf("Account #%u does not exist.\n", accountNum); return; }
+
+    printf("\nAccount Details:\n");
+    printf("Account #: %u\n", client.acctNum);
+    printf("Name     : %s %s\n", client.firstName, client.lastName);
+    printf("Balance  : $%.2f\n\n", client.balance);
+}
+
+// ── logTransaction ───────────────────────────────────────────────────────────
+void logTransaction(const char *action, unsigned int acct1, unsigned int acct2, double amount)
+{
+    FILE *logFile = fopen("transactions.log", "a");
+    if (!logFile) return;
+
+    time_t now = time(NULL);
+    char *timeStr = ctime(&now);
+    timeStr[strlen(timeStr) - 1] = '\0';
+
+    if (acct2 == 0)
+        fprintf(logFile, "[%s] %s | Acct: %u | Amount: $%.2f\n", timeStr, action, acct1, amount);
+    else
+        fprintf(logFile, "[%s] %s | From: %u To: %u | Amount: $%.2f\n", timeStr, action, acct1, acct2, amount);
+
+    fclose(logFile);
+}
+
+// ── viewLog ──────────────────────────────────────────────────────────────────
+void viewLog(void)
+{
+    FILE *logFile = fopen("transactions.log", "r");
+    if (!logFile)
+    {
+        puts("No transaction log found.");
+        return;
+    }
+
+    printf("\n--- Transaction Log ---\n");
+    char line[256];
+    while (fgets(line, sizeof(line), logFile))
+        printf("%s", line);
+    printf("-----------------------\n\n");
+    fclose(logFile);
+}
 
 // ── enterChoice ──────────────────────────────────────────────────────────────
 unsigned int enterChoice(void)
@@ -688,6 +702,7 @@ unsigned int enterChoice(void)
     printf("  8 - Withdraw funds\n");
     printf("  9 - Transfer funds\n");
     printf(" 10 - View account balance\n");
+    printf(" 11 - View transaction log\n");
 
     printf("=========================================\n");
     printf("Your choice: ");
