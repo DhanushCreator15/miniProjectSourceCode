@@ -79,6 +79,9 @@ void         depositFunds(FILE *fPtr);
 void         withdrawFunds(FILE *fPtr);
 void         transferFunds(FILE *fPtr);
 void         viewBalance(FILE *fPtr);
+// Logging functions
+void         logTransaction(const char *action, unsigned int acct1, unsigned int acct2, double amount);
+void         viewLog(void);
 int          readUInt(unsigned int *out);
 int          readDouble(double *out);
 
@@ -151,8 +154,9 @@ int main(void)
         case 8:  withdrawFunds(cfPtr);break;
         case 9:  transferFunds(cfPtr);break;
         case 10: viewBalance(cfPtr);break;
+        case 11: viewLog();break;
         case 6:  // Exit handled by loop condition
-        default: puts("Invalid choice. Please enter 1 – 10."); break;
+        default: puts("Invalid choice. Please enter 1 – 11."); break;
         }
     }
 
@@ -664,18 +668,8 @@ void transferFunds(FILE *fPtr)
     printf("New balances: Source $%.2f, Destination $%.2f\n", srcClient.balance, dstClient.balance);
 }
 
-// ── viewBalance ───────────────────────────────────────────────────────────────
-void viewBalance(FILE *fPtr)
-{
-    unsigned int acct;
-    printf("Enter account number to view balance (1 - %d): ", MAX_ACCOUNTS);
-    if (!readUInt(&acct) || acct < 1 || acct > MAX_ACCOUNTS) { puts("Invalid account."); return; }
-    struct clientData client;
-    fseek(fPtr, (long)(acct - 1) * sizeof(struct clientData), SEEK_SET);
-    fread(&client, sizeof(struct clientData), 1, fPtr);
-    if (client.acctNum == 0) { printf("Account #%u does not exist.\n", acct); return; }
-    printf("Account #%u balance: $%.2f\n", acct, client.balance);
-}
+// ── viewLog function placed after transaction functions (see above)
+// (Already defined earlier)
 
 // ── enterChoice ──────────────────────────────────────────────────────────────
 unsigned int enterChoice(void)
